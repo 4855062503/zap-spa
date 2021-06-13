@@ -1,10 +1,30 @@
 const SWIPER_SLIDE_MARGIN_RIGHT = 0;
 const SWIPER_CONTAINER_MARGIN = '5vw';
 
+var promoPromises = [];
 var isFlutterInAppWebViewReady = false;
 var latitude;
 var longitude;
 var mapBtnPressed;
+
+const promoIsRelevant = async function(retailerId, bannerUrl, logoUrl) {	
+  return await fetchData("getdetail/" + retailerId, function(data) {	
+    data.allStores.forEach(	
+      function(store) {	
+	var d = findProximity(latitude, longitude, parseFloat(store.lat), parseFloat(store.lng));	
+        //if promoted retailer has a store 15km
+	if (d <= 15000) {	
+	  document.querySelector(".swiper-wrapper").innerHTML+="<div class='swiper-slide'><div class='promo-box' onclick='makePageById(" + store.retailerId + ");'><img class='lozad catalog-img' style='width:90vw; height: 40vw; border-radius: 0;' src='" + bannerUrl + "'/><img src='" + logoUrl + "' class='promo-box-logo'/></div></div>";	
+          return true;	
+	}	
+      	
+      }	
+    );	
+    return false;	
+  }	
+  );	
+}
+
 
 const lastElement = function(selector) {
     var eles = document.querySelectorAll(selector);
@@ -49,7 +69,7 @@ const searchItems = function() {
 	document.querySelector(".search-results-container").innerHTML+=`
 	  <div class="search-result-item">
 	    <div class="image-holder">
-	      <img class="search-result-img" src="${element.image.uri}"/>
+	      <img class="search-result-img" src="${element.image.uri}" onerror="this.src='placeholder-square.png'" />
 	    </div>
 	    <div class="text-holder-result">
 	      <p class="title-result">${element.retailer}</p>
@@ -170,7 +190,7 @@ const makePage = function(element_string, promoClicked) {
   <a id="back" href="#" onclick="goBack()" class="float-btn float-bl">
     <i class="fa fa-angle-left float-icon"></i>
   </a>
-  <img class='page-img' src='${element_string.image.uri}' />
+  <img class='page-img' src='${element_string.image.uri}' onerror="this.src='placeholder-retailer.png'" />
   <div class='container-card'>
     <div class='title-holder'><p class='category-title' onclick='viewAll(${element_string.categoryId});'>${element_string.category.toUpperCase()}</p></div>
     <div class='title-holder' ><p class='retailer-title'>${element_string.label}</p></div>
@@ -236,11 +256,14 @@ const geoError = function() {
 const geoSuccess = function(position) {
   latitude = position.coords.latitude;
   longitude = position.coords.longitude;
+  if(mapBtnPressed) {
   storesWithinXMeters(10000, latitude, longitude);
+  }
   
 };
 //builds "Near Me" div
 const storesWithinXMeters= function(maxDistance, latitude, longitude) {
+  mapBtnPressed = false;
   var mymap = L.map('mapid').on("load", function(){
     document.querySelector(".loading-container").setAttribute("style", "display: none;");
   }).setView([parseFloat(latitude), parseFloat(longitude)], 13);  
@@ -308,8 +331,8 @@ const grabUserLocation = function() {
 };
 
 //requests function
-const fetchData = function(endpoint, callback) {
-    fetch("https://zap-spa-cors-anywhere.caprover.acuerdo.dev/https://content.zap.me/_ps/api/zap/" + endpoint,
+const fetchData = async function(endpoint, callback) {
+    await fetch("https://zap-spa-cors-anywhere.caprover.acuerdo.dev/https://content.zap.me/_ps/api/zap/" + endpoint,
         {
             headers:
             {
@@ -324,6 +347,10 @@ const clearCacheBtn = function() {
     document.getElementById("clear-cache").onclick = function() {
         localStorage.clear();
         location.reload(true);
+        // backup if location.reload does not work
+        setTimeout(function() {
+            location.href = location.href.split('#')[0];
+        }, 200);
     };
 }
 
@@ -401,17 +428,23 @@ const addSwiper = function(className, numSlides, numSpace, autoPlay) {
 
 const addPromos = function(layer) {
   layer.innerHTML+=`<div class='svg-holder'><img class='svg-holder-svg' src='places.svg'/></div>`;
-  layer.innerHTML+="<div class='promos-container'></div>";
+  layer.innerHTML+="<div class='promos-container' style='display: none;'></div>";
   document.querySelector(".promos-container").innerHTML+="<p class='tall-size'>Latest Promotions</p>";
   document.querySelector(".promos-container").innerHTML+=`<div class='swiper-promos-container'><div class='swiper-wrapper' id='promos-wrapper'></div></div>`;
   fetchData('getpromotions/', function(response) {
        response.data.content.forEach(
-         (element) => {
-           console.log(element.desc);
-           document.querySelector(".swiper-wrapper").innerHTML+="<div class='swiper-slide'><div class='promo-box' onclick='makePageById(" + element.retailerId + ");'><img class='lozad catalog-img' style='width:90vw; height: 40vw; border-radius: 0;' src='" + element.banner.uri + "'/><img src='" + element.logo.uri + "' class='promo-box-logo'/></div></div>";
+         (element) => {	
+	   promoPromises.push(promoIsRelevant(element.retailerId, element.banner.uri, element.logo.uri));
          }
        );
-    addPromosSwiper();
+    Promise.all(promoPromises).then(	
+      function(results) {
+        if (document.querySelector("#promos-wrapper").childElementCount !== 0) {
+          addPromosSwiper();
+          document.querySelector(".promos-container").setAttribute("style", "display: flex;"); 
+        }
+      }	
+    );
     });
 };
 
@@ -432,7 +465,7 @@ const iterateThruAndAppend = function(layer, items) {
       categoriesSoFar.push("category-" + element.categoryId);
     }
     var lastCategoryArr = document.querySelector("#" + categoriesSoFar[categoriesSoFar.length - 1]);
-    lastCategoryArr.innerHTML+="<div class='swiper-slide'><img class='lozad catalog-img' data-src='" + element.image.uri + "' onclick='makePageById(" + element.retailerId + ");' /></div>";
+    lastCategoryArr.innerHTML+="<div class='swiper-slide'><img class='lozad catalog-img' data-placeholder-background='#EEEEEE' data-src='" + element.image.uri + "' onclick='makePageById(" + element.retailerId + ");' /></div>";
   }
   );
   
@@ -630,6 +663,7 @@ window.addEventListener("flutterInAppWebViewPlatformReady", function(event) {
 });
 
 initBaseLayer();
+grabUserLocation();
 clearCacheBtn();
 openMapsBtn();
 window.addEventListener("keydown", function (e) { if (13 == e.keyCode) {searchItems();} })
